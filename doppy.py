@@ -36,6 +36,13 @@ PRUNE_OPERATIONS_MAP = {
     }
 DEFAULT_DEPTH = float('inf')
 
+def _range (start, stop, step=1):
+    """Fake range function.
+    Yields values (by step) from start until start < stop.
+    """
+    while start < stop:
+        yield start
+        start += step
 
 def get_hash (file, hash_type='sha224', size=2048):
     with open(file, 'rb') as f:
@@ -47,7 +54,7 @@ def get_hash (file, hash_type='sha224', size=2048):
             hash_.update(buf)
     return hash_.hexdigest()
 
-def ignore_inaccessible(paths):
+def ignore_inaccessible (paths):
     for path in paths:
         try:
             os.stat(path)
@@ -55,7 +62,7 @@ def ignore_inaccessible(paths):
         except OSError:
             pass
         
-def find(basepath, depth):
+def _find (basepath, depth):
     for subdir, _, files in os.walk(basepath):
         if len(list(
             filter(None, os.path.split(
@@ -63,24 +70,29 @@ def find(basepath, depth):
             for file in files:
                 yield os.path.join(subdir, file)
 
-def prune_size(paths, op, byte_size):
+def find (basepath, depth):
+    for d, (subdir, _, files) in zip(_range(0, depth), os.walk(basepath)):
+        for file in files:
+            yield os.path.join(subdir, file)
+
+def prune_size (paths, op, byte_size):
     for path in paths:
         if op(os.stat(path).st_size, byte_size):
             yield path
         
-def prune_by_stat_attr(paths, op, stat_attr, value):
+def prune_by_stat_attr (paths, op, stat_attr, value):
     for path in paths:
         if op(os.stat(path)[stat_attr], value):
             yield path
 
-def prune_match(paths, patterns):
+def prune_match (paths, patterns):
     for path in paths:
         for pattern in patterns:
             if fnmatch.fnmatch(path, pattern):
                 yield path
                 break
 
-def checksum(paths, hash_func_name):
+def checksum (paths, hash_func_name):
     dd = collections.defaultdict(list)
     if hash_func_name not in hashlib.algorithms_available:
         raise TypeError('Unknown hash function "{}"'.format(hash_func_name))
