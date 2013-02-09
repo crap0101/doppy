@@ -102,80 +102,84 @@ def checksum (paths, hash_func_name):
         if len(files) > 1:
             yield hash_, files
 
-def get_parsed(args=None):
+def get_parsed (args=None):
     parser = argparse.ArgumentParser(description='find duplicate files.')
-    parser.add_argument('-s', '--size',
-                        dest='size', metavar=('OPERATOR', 'VALUE'),
-                        action='append', nargs=2, default=[],
-                        help='check only files for which the expression'
-                        ' `filesize OPERATOR VALUE` match. For example'
-                        ' --size > 100 (VALUE in bytes). Available operators'
-                        ' are {0}'.format(', '.join(PRUNE_OPERATIONS_MAP.keys())))
-    parser.add_argument('-t', '--time',
-                        dest='time', action='append', nargs=3,
-                        metavar=('STAT_ATTR', 'OPERATOR', 'VALUE'), default=[],
-                        help='check only files for which the expression'
-                        ' `STATT_ATTR OPERATOR VALUE` match. For example'
-                        ' -t atime > 1234300 . VALUE must be a numer or'
-                        ' a string suitable for datetime conversion'
-                        ' like "YEAR:MONTH:DAY:HOUR:MIN:SEC" (YEAR, MONTH and'
-                        ' DAY are required). Available operators are'
-                        ' {0}. Available attributes are: {1}'.format(
-                            ', '.join(PRUNE_OPERATIONS_MAP.keys()),
-                            ', '.join(('atime', 'mtime', 'ctime'))))
-    parser.add_argument('-u', '--uid',
-                        type=int, dest='uid', metavar='uid',
-                        help='check only files with the given UID')
-    parser.add_argument('-g', '--gid',
-                        type=int, dest='gid', metavar='gid',
-                        help='check only files with the given GID')
+    parser.add_argument('-d', '--depth', 
+                        type=int, dest='depth', default=DEFAULT_DEPTH,
+                        metavar='N', help='''Descend at most N levels of 
+                        directories. N <= 0 means no limit (default).''')
     parser.add_argument('-H', '--hashfunc',
                         type=str, dest='hash', metavar='HASH_FUNC_NAME',
                         choices=hashlib.algorithms_available, default='md5',
-                        help='hash function to use on files, One of:'
-                        ' {}'.format(', '.join(hashlib.algorithms_available)))
-    parser.add_argument('-d', '--depth', 
-                        type=int, dest='depth',
-                        default=DEFAULT_DEPTH, metavar='N',
-                        help='Descend at most N (a non-negative integer)'
-                        ' levels of directories')
-    parser.add_argument('-p', '--patterns',
+                        help='''hash function to use on files, One of:{}
+                        '''.format(', '.join(hashlib.algorithms_available)))
+    parser.add_argument('-i', '--ignore-non-existent',
+                        action='store_true', dest='ignore',
+                        help='''ignore non existent or inaccessible files,
+                        raise an error otherwise.''')
+    parser.add_argument('-q', '--quiet',
+                        action='store_true', dest='quiet', help='no output.')
+
+    filter_group = parser.add_argument_group('filters')
+    filter_group.add_argument('-s', '--size',
+                        dest='size', metavar=('OPERATOR', 'VALUE'),
+                        action='append', nargs=2, default=[],
+                        help='''check only files for which the expression
+                         `filesize OPERATOR VALUE` match. For example
+                         --size > 100 (VALUE in bytes). Available operators
+                         are {0}'''.format(', '.join(PRUNE_OPERATIONS_MAP.keys())))
+    filter_group.add_argument('-t', '--time',
+                        dest='time', action='append', nargs=3,
+                        metavar=('STAT_ATTR', 'OPERATOR', 'VALUE'), default=[],
+                        help='''check only files for which the expression
+                         `STATT_ATTR OPERATOR VALUE` match. For example
+                         -t atime > 1234300 . VALUE must be a numer or
+                         a string suitable for datetime conversion
+                         like "YEAR:MONTH:DAY:HOUR:MIN:SEC" (YEAR, MONTH and'
+                         DAY are required). Available operators are'
+                         {0}. Available attributes are: {1}'''.format(
+                            ', '.join(PRUNE_OPERATIONS_MAP.keys()),
+                            ', '.join(('atime', 'mtime', 'ctime'))))
+    filter_group.add_argument('-u', '--uid',
+                        type=int, dest='uid', metavar='uid',
+                        help='check only files with the given UID')
+    filter_group.add_argument('-g', '--gid',
+                        type=int, dest='gid', metavar='gid',
+                        help='check only files with the given GID')
+
+    paths_group = parser.add_argument_group('paths')
+    paths_group.add_argument('-p', '--patterns',
                         nargs='*', dest='patterns', default=[],
                         type=str, metavar='PATTERN',
-                        help='check only files which match the pattern(s)'
-                        ' provided (use fnmatch)')
-    parser.add_argument('-P', '--paths',
+                        help='''check only files which match the pattern(s)
+                        provided (use fnmatch)''')
+    paths_group.add_argument('-P', '--paths',
                         type=str, dest='paths', metavar='PATH',
                         nargs='*', default=[os.getcwd()],
                         help='search files in PATH(S)')
-    parser.add_argument('-m', '--merge',
+    paths_group.add_argument('-m', '--merge',
                         action='store_true', dest='merge',
-                        help='check file globally, i.e. in any PATH'
-                        ' specified with the -P/--paths option.'
-                        ' Default action is to check for duplicates'
-                        ' independently for each path.')
-    parser.add_argument('-i', '--ignore',
-                        action='store_true', dest='ignore',
-                        help='ignore non existent or inaccessible files')
-    parser.add_argument('-o', '--output-file', dest='output', metavar='FILE',
+                        help='''check file globally, i.e. in any PATH
+                         specified with the -P/--paths option.
+                         Default action is to check for duplicates
+                        independently for each path.''')
+
+    output_group = parser.add_argument_group('output')
+    meg = output_group.add_mutually_exclusive_group()
+    meg.add_argument('-o', '--output-file', dest='output', metavar='FILE',
                         help='output results on FILE.'
                         ' (default: write to stdout).')
-    parser.add_argument('-a', '--append-file', dest='append', metavar='FILE',
+    meg.add_argument('-a', '--append-file', dest='append', metavar='FILE',
                         help='append results on FILE')
-    parser.add_argument('-q', '--quiet',
-                        action='store_true', dest='quiet',
-                        help='no output will be written.')
-    return parser.parse_args(args or sys.argv[1:])
 
-def main():
+    return parser.parse_args(args)
+
+
+def main ():
     opts = get_parsed()
     to_find = []
-    if opts.append == opts.output and any((opts.output, opts.append)):
-        raise TypeError('cannot append and output on'
-                        ' the same file: {}'.format(opts.append))
     if opts.depth <= 0:
-        raise TypeError('depth must be a positive number, not {}'.format(
-            opts.depth))
+        opts.depth = DEFAULT_DEPTH
     for p in opts.paths:
         gen = find(os.path.abspath(p), opts.depth)        
         if opts.ignore:
