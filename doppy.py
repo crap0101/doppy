@@ -12,6 +12,7 @@ import fnmatch
 import functools
 import hashlib
 import itertools
+import json
 from numbers import Number
 import operator
 import os
@@ -199,11 +200,9 @@ def checksum (paths: Sequence[str], hash_func_name: str) -> dict:
             warnings.warn(f'get_hash: {path} => {err}')
     return dd
 
-def filter_dup (items: dict) -> Iterator[Tuple[str, List[str]]]:
+def filter_dup (result_dict: dict) -> dict:
     """Yields tuples of (hash, list_of_filenames_with_the_same_hash)."""
-    for hash_, files in items.items():
-        if len(files) > 1:
-            yield (hash_, files)
+    return dict((hash_, files) for hash_, files in result_dict.items() if len(files) > 1)
 
 
 ###############################
@@ -273,6 +272,10 @@ def get_parser ():
                         (using re.match() function).''')
     # output
     output_group = parser.add_argument_group('output')
+    output_group.add_argument('-j', '--json',
+                        dest='to_json', action='store_true',
+                        help='''To be used with the -o option, save results in the json format
+                        (for subsequent easy processing).''')
     meg = output_group.add_mutually_exclusive_group()
     meg.add_argument('-o', '--output-file',
                      dest='output', metavar='FILE',
@@ -352,6 +355,8 @@ def main ():
     parser = get_parser()
     args = parser.parse_args()
     warnings.simplefilter(args.warn)
+    if args.append and args.to_json:
+        warnings.warn('[BAD!] -j option ignored. To be used with -o only.')
     results = filter_dup(_doit(args))
     if args.output:
         outfile = open(args.output, 'w')
@@ -359,11 +364,14 @@ def main ():
         outfile = open(args.append, 'a')
     else:
         outfile = sys.stdout
-    for hash_, files in itertools.chain(results):
-        print('hash: {0}\n{1}\n'.format(
-            hash_, '\n'.join(files)), file=outfile)
+    if args.to_json and not args.append:
+        json.dump(results, outfile)
+    else:
+        for hash_, files in results.items():
+            print('hash: {0}\n{1}\n'.format(
+                hash_, '\n'.join(files)), file=outfile)
     if outfile != sys.stdout:
-            outfile.close()
+        outfile.close()
 
 
 if __name__ == '__main__':
