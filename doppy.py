@@ -201,7 +201,7 @@ def checksum (paths: Sequence[str], hash_func_name: str) -> dict:
     return dd
 
 def filter_dup (result_dict: dict) -> dict:
-    """Yields tuples of (hash, list_of_filenames_with_the_same_hash)."""
+    """Returns a dict of {hash: list_of_filenames_with_the_same_hash}."""
     return dict((hash_, files) for hash_, files in result_dict.items() if len(files) > 1)
 
 
@@ -345,10 +345,6 @@ def _doit (args):
         else:
             filtered_uid = filtered_gid
         to_find.append(filtered_uid)
-    """#XXXXXXX: compare with find from findutils: OK
-    for path in itertools.chain(*to_find):
-        print(path)
-    sys.exit()#"""
     return checksum(itertools.chain(*to_find), args.hash)
 
 def main ():
