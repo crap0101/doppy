@@ -103,15 +103,6 @@ def get_hash (path: str, hash_type: str ='sha224', size: int =2048) -> str:
             hashed.update(buf)
     return hashed.hexdigest()
 
-def __ignore_inaccessible (paths): # XXX to del
-    """Superseeded by check_real and check_regular functions."""
-    for path in paths:
-        try:
-            os.stat(path)
-            yield path
-        except OSError as err:
-            warnings.warn(f'{path} => {err}')
-
 def expand_path (path: str) -> str:
     """Expands $path to the canonical form."""
     return os.path.abspath(os.path.expanduser(os.path.expandvars(path)))
