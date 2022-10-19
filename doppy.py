@@ -231,6 +231,7 @@ def get_parser ():
                         choices=hashlib.algorithms_available, default='md5',
                         metavar='HASH_FUNC',
                         help='''Hash function to use on files, One of: {}.
+                        Default to "%(default)s".
                         '''.format(', '.join(hashlib.algorithms_available)))
     parser.add_argument('-w', '--warn',
                         dest='warn', choices=WARN_OPT, default='always',
