@@ -1,11 +1,6 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
-"""
-find duplicate files.
-# python 3.8.10
-"""
-
-# Copyright (C) 2022 Marco Chieppa (aka crap0101)
+# Copyright (C) 2022-2024 Marco Chieppa (aka crap0101)
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation; either version 3 of the License, or
@@ -35,6 +30,25 @@ import sys
 import time
 from typing import Callable, Iterator, List, Sequence, Tuple, Union
 import warnings
+
+__doc__ = """=====================
+Find duplicate files.
+# python >= 3.8.10
+
+Search for duplicated file on the given paths and write to file (or stdout)
+the result in the following format: a line with the ash of a group of
+duplicate files followed by the path of the duplicated files (one per line)
+followed by an empty line, as like:
+hash:FILES_HASH
+DUPLICATE_FILE_1_PATH
+DUPLICATE_FILE_2_PATH
+DUPLICATE_FILE_N_PATH
+
+hash:ANOTHER_FILES_HASH
+DUP.....
+DU......
+===========================================================================
+"""
 
 
 #
@@ -117,7 +131,7 @@ def check_real (path: str) -> Tuple[bool, str, Union[None, Exception]]:
     """
     Checks if realpath($path) == $path
     Returns (bool, realpath, None) or (False, None, raised exception).
-    See note at https://docs.python.org/3.8/library/os.path.html#os.path.realpath
+    See note: https://docs.python.org/3.8/library/os.path.html#os.path.realpath
     """
     try:
         real_path = realpath(path)
@@ -215,11 +229,15 @@ def filter_dup (result_dict: dict) -> dict:
 ###############################
 
 def get_parser ():
-    parser = argparse.ArgumentParser(description='Find duplicate files.')
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    # positional
     parser.add_argument('paths',
                         type=str, nargs='*', default=[os.getcwd()],
                         metavar='PATH',
                         help='Search files in %(metavar)s(s).')
+    # options
     parser.add_argument('-d', '--depth', 
                         dest='depth', type=int, default=DEFAULT_DEPTH,
                         metavar='N',
@@ -370,7 +388,7 @@ def main ():
         json.dump(results, outfile)
     else:
         for hash_, files in results.items():
-            print('hash: {0}\n{1}\n'.format(
+            print('#hash: {0}\n{1}\n'.format(
                 hash_, '\n'.join(files)), file=outfile)
     if outfile != sys.stdout:
         outfile.close()
