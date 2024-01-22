@@ -39,12 +39,12 @@ Search for duplicated file on the given paths and write to file (or stdout)
 the result in the following format: a line with the ash of a group of
 duplicate files followed by the path of the duplicated files (one per line)
 followed by an empty line, as like:
-hash:FILES_HASH
+#hash: FILES_HASH
 DUPLICATE_FILE_1_PATH
 DUPLICATE_FILE_2_PATH
 DUPLICATE_FILE_N_PATH
 
-hash:ANOTHER_FILES_HASH
+#hash: ANOTHER_FILES_HASH
 DUP.....
 DU......
 ===========================================================================
