@@ -191,6 +191,16 @@ def prune_pattern (paths: Sequence[str], patterns: Sequence[str]) -> Iterator[st
                 yield path
                 break
 
+def exclude_pattern (paths: Sequence[str], patterns: Sequence[str]) -> Iterator[str]:
+    """
+    Prune by pattern.
+    Yields paths from $paths which filename *not* match any
+    of the $patterns (using fnmatch).
+    """
+    for path in paths:
+        if not any(fnmatch.fnmatch(path, pattern) for pattern in patterns):
+            yield path
+
 def prune_regex (paths: Sequence[str], regex: Sequence[str]) -> Iterator[str]:
     """
     Prune with regex.
@@ -204,7 +214,17 @@ def prune_regex (paths: Sequence[str], regex: Sequence[str]) -> Iterator[str]:
                 yield path
                 break
 
-    
+def exclude_regex (paths: Sequence[str], regex: Sequence[str]) -> Iterator[str]:
+    """
+    Prune with regex.
+    Yields paths from $paths which whole path *not* match any
+    of the $regex pattern using the re.match() function.
+    """
+    compiled_re = [re.compile(r) for r in regex]
+    for path in paths:
+        if not any(prog.match(path) for prog in compiled_re):
+            yield path
+
 def checksum (paths: Sequence[str], hash_func_name: str) -> dict:
     """
     Do checksum of path in $paths using hashlib's $hash_func_name.
@@ -278,12 +298,12 @@ def get_parser ():
                          {0}. Available attributes are: {1}.'''.format(
                             ', '.join(PRUNE_OPERATIONS_MAP.keys()),
                             ', '.join(('atime', 'mtime', 'ctime'))))
-    filter_group.add_argument('-u', '--uid',
-                        type=int, dest='uid',metavar='uid',
-                        help='Check only files with the given UID.')
     filter_group.add_argument('-g', '--gid',
                         type=int, dest='gid', metavar='gid',
                         help='Check only files with the given GID.')
+    filter_group.add_argument('-u', '--uid',
+                        type=int, dest='uid',metavar='uid',
+                        help='Check only files with the given UID.')
     filter_group.add_argument('-p', '--patterns',
                         nargs='+', dest='patterns', default=[],
                         type=str, metavar='PATTERN',
@@ -293,7 +313,17 @@ def get_parser ():
                         nargs='+', dest='regex', default=[],
                         type=str, metavar='PATTERN',
                         help='''Check only whole paths which match %(metavar)ss
-                        (using re.match() function).''')
+                        (using re.match function).''')
+    filter_group.add_argument('-e', '--exclude',
+                        nargs='+', dest='exclude_patterns', default=[],
+                        type=str, metavar='PATTERN',
+                        help='''Exclude filenames which match %(metavar)ss
+                        (using fnmatch).''')
+    filter_group.add_argument('-E', '--exclude-regex',
+                        nargs='+', dest='exclude_regex', default=[],
+                        type=str, metavar='PATTERN',
+                        help='''Exclude paths which match %(metavar)ss
+                        (using re.match function).''')
     # output
     output_group = parser.add_argument_group('output')
     output_group.add_argument('-j', '--json',
@@ -354,7 +384,9 @@ def _doit (args):
     for basepath in args.paths:
         all_paths = find(expand_path(os.path.join(os.getcwd(), basepath)), args.depth)
         regular = prune_regular(all_paths)
-        filtered_p = prune_pattern(regular, args.patterns) if args.patterns else regular
+        filtered_ep = exclude_pattern(regular, args.exclude_patterns) if args.exclude_patterns else regular
+        filtered_regex = exclude_regex(filtered_ep, args.exclude_regex) if args.exclude_regex else filtered_ep
+        filtered_p = prune_pattern(filtered_regex, args.patterns) if args.patterns else filtered_regex
         filtered_regex = prune_regex(filtered_p, args.regex) if args.regex else filtered_p
         filtered_size = filter_size(filtered_regex, args.size)
         filtered_time = filter_time(filtered_size, args.time)
