@@ -131,7 +131,7 @@ def check_real (path: str) -> Tuple[bool, str, Union[None, Exception]]:
     """
     Checks if realpath($path) == $path
     Returns (bool, realpath, None) or (False, None, raised exception).
-    See note: https://docs.python.org/3.8/library/os.path.html#os.path.realpath
+    See: https://docs.python.org/3.8/library/os.path.html#os.path.realpath
     """
     try:
         real_path = realpath(path)
@@ -159,7 +159,8 @@ def _find_irregular (paths: Sequence[str]):
     raise NotImplementedError('to be written')
     #XXX+TODO: write a filter to find broken links or not stat-able files only
 
-def prune_size (paths: Sequence[str], op: Callable, byte_size: int) -> Iterator[str]:
+def prune_size (paths: Sequence[str],
+                op: Callable, byte_size: int) -> Iterator[str]:
     """
     Prune by size.
     Yields filenames from $paths for which $op(path, $byte_size) is True.
@@ -174,16 +175,18 @@ def prune_by_stat_attr (paths: Sequence[str],
                         value: Number) -> Iterator[str]:
     """
     Prune by stat attribute.
-    Yields filenames from $paths for which $op(path's $stat_attr, $value) is True.
+    Yields filenames from $paths for which
+    $op(path's $stat_attr, $value) is True.
     """
     for path in paths:
         if op(getattr(os.stat(path), stat_attr), value):
             yield path
 
-def prune_pattern (paths: Sequence[str], patterns: Sequence[str]) -> Iterator[str]:
+def prune_pattern (paths: Sequence[str],
+                   patterns: Sequence[str]) -> Iterator[str]:
     """
     Prune by pattern.
-    Yields paths from $paths which filename match any of the $patterns (using fnmatch).
+    Yields paths from $paths which match any of the $patterns (use fnmatch).
     """
     for path in paths:
         for pattern in patterns:
@@ -191,21 +194,22 @@ def prune_pattern (paths: Sequence[str], patterns: Sequence[str]) -> Iterator[st
                 yield path
                 break
 
-def exclude_pattern (paths: Sequence[str], patterns: Sequence[str]) -> Iterator[str]:
+def exclude_pattern (paths: Sequence[str],
+                     patterns: Sequence[str]) -> Iterator[str]:
     """
     Prune by pattern.
-    Yields paths from $paths which filename *not* match any
-    of the $patterns (using fnmatch).
+    Yields paths from $paths which *not* match any of $patterns (use fnmatch).
     """
     for path in paths:
         if not any(fnmatch.fnmatch(path, pattern) for pattern in patterns):
             yield path
 
-def prune_regex (paths: Sequence[str], regex: Sequence[str]) -> Iterator[str]:
+def prune_regex (paths: Sequence[str],
+                 regex: Sequence[str]) -> Iterator[str]:
     """
     Prune with regex.
-    Yields paths from $paths which whole path match any of the $regex pattern
-    using the re.match() function.
+    Yields paths from $paths which match any
+    of the $regex pattern (use re.match).
     """
     compiled_re = [re.compile(r) for r in regex]
     for path in paths:
@@ -214,11 +218,12 @@ def prune_regex (paths: Sequence[str], regex: Sequence[str]) -> Iterator[str]:
                 yield path
                 break
 
-def exclude_regex (paths: Sequence[str], regex: Sequence[str]) -> Iterator[str]:
+def exclude_regex (paths: Sequence[str],
+                   regex: Sequence[str]) -> Iterator[str]:
     """
     Prune with regex.
-    Yields paths from $paths which whole path *not* match any
-    of the $regex pattern using the re.match() function.
+    Yields paths from $paths which *not* match any
+    of the $regex pattern (use re.match).
     """
     compiled_re = [re.compile(r) for r in regex]
     for path in paths:
@@ -241,7 +246,8 @@ def checksum (paths: Sequence[str], hash_func_name: str) -> dict:
 
 def filter_dup (result_dict: dict) -> dict:
     """Returns a dict of {hash: list_of_filenames_with_the_same_hash}."""
-    return dict((hash_, files) for hash_, files in result_dict.items() if len(files) > 1)
+    return dict((hash_, files)
+                for hash_, files in result_dict.items() if len(files) > 1)
 
 
 ###############################
@@ -261,8 +267,8 @@ def get_parser ():
     parser.add_argument('-d', '--depth', 
                         dest='depth', type=int, default=DEFAULT_DEPTH,
                         metavar='N',
-                        help='''Descends at most %(metavar)s levels of directories.
-                        Starting directory is at level 1.
+                        help='''Descends at most %(metavar)s levels
+                        of directories. Starting directory is at level 1.
                         %(metavar)s <= 0 means no limits (default).''')
     parser.add_argument('-H', '--hashfunc',
                         dest='hash', type=str,
@@ -283,9 +289,9 @@ def get_parser ():
                         metavar=('OPERATOR', 'VALUE'),
                         help='''Check only files for which the expression
                          `filesize OPERATOR VALUE` match. For example
-                         --size > 100 (VALUE in bytes) match only files greater than
-                        100 bytes.. Available operators are {0}.'''.format(
-                            ', '.join(PRUNE_OPERATIONS_MAP.keys())))
+                         --size > 100 (VALUE in bytes) match only files
+                        greater than 100 bytes.. Available operators are {0}.
+                        '''.format(', '.join(PRUNE_OPERATIONS_MAP.keys())))
     filter_group.add_argument('-t', '--time',
                         dest='time', action='append', nargs=3, default=[],
                         metavar=('STAT_ATTR', 'OPERATOR', 'VALUE'),
@@ -308,27 +314,28 @@ def get_parser ():
                         nargs='+', dest='patterns', default=[],
                         type=str, metavar='PATTERN',
                         help='''Check only filenames which match %(metavar)ss
-                        (using fnmatch).''')
+                        (use fnmatch).''')
     filter_group.add_argument('-r', '--regex',
                         nargs='+', dest='regex', default=[],
                         type=str, metavar='PATTERN',
                         help='''Check only whole paths which match %(metavar)ss
-                        (using re.match function).''')
+                        (use re.match).''')
     filter_group.add_argument('-e', '--exclude',
                         nargs='+', dest='exclude_patterns', default=[],
                         type=str, metavar='PATTERN',
                         help='''Exclude filenames which match %(metavar)ss
-                        (using fnmatch).''')
+                        (use fnmatch).''')
     filter_group.add_argument('-E', '--exclude-regex',
                         nargs='+', dest='exclude_regex', default=[],
                         type=str, metavar='PATTERN',
                         help='''Exclude paths which match %(metavar)ss
-                        (using re.match function).''')
+                        (use re.match).''')
     # output
     output_group = parser.add_argument_group('output')
     output_group.add_argument('-j', '--json',
                         dest='to_json', action='store_true',
-                        help='''To be used with the -o option, save results in the json format
+                        help='''To be used with the -o option,
+                        save results in the json format
                         (for subsequent easy processing).''')
     meg = output_group.add_mutually_exclusive_group()
     meg.add_argument('-o', '--output-file',
@@ -373,7 +380,8 @@ def filter_time (paths, times_opts):
             except (TypeError, ValueError) as e:
                 raise TypeError(
                     'invalid time: {0}: {1}'.format(e, str_val))
-        filtered = prune_by_stat_attr(filtered, op, STAT_PRUNE_OPTIONS[attr], val)
+        filtered = prune_by_stat_attr(
+            filtered, op, STAT_PRUNE_OPTIONS[attr], val)
     return filtered
 
 
@@ -382,26 +390,38 @@ def _doit (args):
     if args.depth <= 0:
         args.depth = DEFAULT_DEPTH
     for basepath in args.paths:
-        all_paths = find(expand_path(os.path.join(os.getcwd(), basepath)), args.depth)
+        all_paths = find(expand_path(os.path.join(os.getcwd(), basepath)),
+                         args.depth)
         regular = prune_regular(all_paths)
-        filtered_ep = exclude_pattern(regular, args.exclude_patterns) if args.exclude_patterns else regular
-        filtered_regex = exclude_regex(filtered_ep, args.exclude_regex) if args.exclude_regex else filtered_ep
-        filtered_p = prune_pattern(filtered_regex, args.patterns) if args.patterns else filtered_regex
-        filtered_regex = prune_regex(filtered_p, args.regex) if args.regex else filtered_p
+        filtered_ep = (exclude_pattern(regular, args.exclude_patterns)
+                       if args.exclude_patterns else regular)
+        filtered_regex = (exclude_regex(filtered_ep, args.exclude_regex)
+                          if args.exclude_regex else filtered_ep)
+        filtered_p = (prune_pattern(filtered_regex, args.patterns)
+                      if args.patterns else filtered_regex)
+        filtered_regex = (prune_regex(filtered_p, args.regex)
+                          if args.regex else filtered_p)
         filtered_size = filter_size(filtered_regex, args.size)
         filtered_time = filter_time(filtered_size, args.time)
         if args.gid is not None:
-            filtered_gid = prune_by_stat_attr(filtered_time, operator.eq,
-                                     STAT_PRUNE_OPTIONS['gid'], args.gid)
+            filtered_gid = prune_by_stat_attr(
+                filtered_time,
+                operator.eq,
+                STAT_PRUNE_OPTIONS['gid'],
+                args.gid)
         else:
             filtered_gid = filtered_time
         if args.uid is not None:
-            filtered_uid = prune_by_stat_attr(filtered_gid, operator.eq,
-                                     STAT_PRUNE_OPTIONS['uid'], args.uid)
+            filtered_uid = prune_by_stat_attr(
+                filtered_gid,
+                operator.eq,
+                STAT_PRUNE_OPTIONS['uid'],
+                args.uid)
         else:
             filtered_uid = filtered_gid
         to_find.append(filtered_uid)
     return checksum(itertools.chain(*to_find), args.hash)
+
 
 def main ():
     parser = get_parser()
