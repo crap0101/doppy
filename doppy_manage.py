@@ -190,6 +190,7 @@ if __name__ == '__main__':
 
     parser = get_parser()
     args = parser.parse_args()
+
     if args.to_text and args.to_json:
         parser.error('requested output in both text and json format')
 
@@ -205,11 +206,12 @@ if __name__ == '__main__':
         data = get_map_json(source)
     else:
         data = get_map_txt(source)
-    #print(data) ######
+
     if args.remove_old:
         delete_old_duples(sort_by_time(data))
     if args.to_text:
         print_text(data, out)
     elif args.to_json:
         print_json(data, out)
+    
 
