@@ -88,8 +88,9 @@ def sort_by_time (mapping):
 
 def delete_old_duples (seq):
     """
-    Removes all but the newest duples from $seq, the object
-    returned by *sort_by_time*.
+    Removes all but the element from the sequences of duples in $seq,
+    i.e. keep the newest file only when $seq has been generated
+    using *sort_by_time* function.
     """
     for files in seq:
         last, *others = files
