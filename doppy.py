@@ -64,6 +64,8 @@ else:
 # SOME CONSTANTS FOR PRUNE/COMPARE OPERATIONS #
 ###############################################
 
+READ_SIZE = 1024*16
+
 # see https://docs.python.org/3.8/library/os.html#os.stat_result
 STAT_PRUNE_OPTIONS = {
     'uid':   'st_uid',      # User id of the owner.
@@ -103,7 +105,7 @@ def frange (start: Number, stop: Number, step: Number=1) -> Iterator[Number]:
         yield start
         start += step
 
-def get_hash (path: str, hash_type: str ='sha224', size: int =2048) -> str:
+def get_hash (path: str, hash_type: str ='sha224', size: int =READ_SIZE) -> str:
     """
     Returns the hash of $path using $hash_type function.
     reading blocks of $size bytes of the file at a time.
