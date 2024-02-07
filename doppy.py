@@ -22,9 +22,8 @@ import datetime
 import fnmatch
 import functools
 import hashlib
-import itertools
 import json
-from multiprocessing import Manager
+from multiprocessing import Manager, Lock
 from numbers import Number
 import operator
 import os
@@ -53,6 +52,8 @@ DU......
 ===========================================================================
 """
 
+PROGNAME = 'doppy'
+VERSION = '1.0'
 
 #
 # Manage the 'strict' parameter of os.path.realpath (added since python 3.10)
@@ -102,27 +103,51 @@ PRUNE_OPERATIONS_MAP = {
     '>': operator.gt,
 }
 
-
 class MPAction:
     """For (Thread|Process)Pool"""
     def __init__(self, fun, proxy):
         self.fun = fun
         self.proxy = proxy
     
-class MPAGetHash(MPAction):
+class MPAFilterT(MPAction):
+    def __init__(self, fun, rest_args, proxy):
+        self.fun = fun
+        self.rest_args = rest_args
+        self.proxy = proxy
+        # self.lock as class attribute
     def __call__(self, path):
-        ret = self.fun(path)
+        if list(self.fun([path], *self.rest_args)):
+            self.lock.acquire()
+            self.proxy.append(path)
+            self.lock.release()
+
+class MPAGetHashT(MPAFilterT):
+    def __call__(self, path):
+        ret = self.fun(path, *self.rest_args)
+        self.lock.acquire()
         if ret not in self.proxy:
             self.proxy[ret] = [path]
         else:
-            self.proxy[ret].append(path)
+            self.proxy[ret] = list(self.proxy[ret]) + [path]
+        self.lock.release()
 
-class MPAFilter(MPAction):
+class MPAFilterP(MPAction):
+    def __init__(self, fun, rest_args, proxy):
+        self.fun = fun
+        self.rest_args = rest_args
+        self.proxy = proxy
     def __call__(self, path):
-        if (ret := self.fun(path)):
-            self.proxy.append(ret)
+        if list(self.fun([path], *self.rest_args)):
+            self.proxy.append(path)
 
-
+class MPAGetHashP(MPAFilterP):
+    def __call__(self, path):
+        ret = self.fun(path, *self.rest_args)
+        if ret not in self.proxy:
+            self.proxy[ret] = [path]
+        else:
+            self.proxy[ret] = list(self.proxy[ret]) + [path]
+        
 def showwarning (message, cat, fn, lno, *a, **k):
     print(message)
 warnings.showwarning = showwarning
@@ -137,7 +162,7 @@ def frange (start: Number, stop: Number, step: Number=1) -> Iterator[Number]:
         yield start
         start += step
 
-def get_hash (path: str, hash_type: str ='sha224', size: int =READ_SIZE) -> str:
+def get_hash (path: str, hash_type: str, size: int) -> str:
     """
     Returns the hash of $path using $hash_type function.
     reading blocks of $size bytes of the file at a time.
@@ -193,8 +218,8 @@ def _find_irregular (paths: Sequence[str]):
     raise NotImplementedError('to be written')
     #XXX+TODO: write a filter to find broken links or not stat-able files only
 
-def prune_size (op: Callable, byte_size: int,
-                paths: Sequence[str]) -> Iterator[str]:
+def prune_size (paths: Sequence[str], op: Callable, byte_size: int,
+                ) -> Iterator[str]:
     """
     Prune by size.
     Yields filenames from $paths for which $op(path, $byte_size) is True.
@@ -203,10 +228,11 @@ def prune_size (op: Callable, byte_size: int,
         if op(os.stat(path).st_size, byte_size):
             yield path
         
-def prune_by_stat_attr (op: Callable,
+def prune_by_stat_attr (paths: Sequence[str],
+                        op: Callable,
                         stat_attr: str,
                         value: Number,
-                        paths: Sequence[str]) -> Iterator[str]:
+                        ) -> Iterator[str]:
     """
     Prune by stat attribute.
     Yields filenames from $paths for which
@@ -216,8 +242,8 @@ def prune_by_stat_attr (op: Callable,
         if op(getattr(os.stat(path), stat_attr), value):
             yield path
 
-def prune_pattern (patterns: Sequence[str],
-                   paths: Sequence[str]) -> Iterator[str]:
+def prune_pattern (paths: Sequence[str], patterns: Sequence[str],
+                   ) -> Iterator[str]:
     """
     Prune by pattern.
     Yields paths from $paths which match any of the $patterns (use fnmatch).
@@ -228,8 +254,8 @@ def prune_pattern (patterns: Sequence[str],
                 yield path
                 break
 
-def exclude_pattern (patterns: Sequence[str],
-                     paths: Sequence[str]) -> Iterator[str]:
+def exclude_pattern (paths: Sequence[str], patterns: Sequence[str]
+                     ) -> Iterator[str]:
     """
     Prune by pattern.
     Yields paths from $paths which *not* match any of $patterns (use fnmatch).
@@ -238,8 +264,8 @@ def exclude_pattern (patterns: Sequence[str],
         if not any(fnmatch.fnmatch(path, pattern) for pattern in patterns):
             yield path
 
-def prune_regex (regex: Sequence[str],
-                 paths: Sequence[str]) -> Iterator[str]:
+def prune_regex (paths: Sequence[str], regex: Sequence[str]
+                 ) -> Iterator[str]:
     """
     Prune with regex.
     Yields paths from $paths which match any
@@ -252,8 +278,8 @@ def prune_regex (regex: Sequence[str],
                 yield path
                 break
 
-def exclude_regex (regex: Sequence[str],
-                   paths: Sequence[str]) -> Iterator[str]:
+def exclude_regex (paths: Sequence[str], regex: Sequence[str]
+                   ) -> Iterator[str]:
     """
     Prune with regex.
     Yields paths from $paths which *not* match any
@@ -264,7 +290,7 @@ def exclude_regex (regex: Sequence[str],
         if not any(prog.match(path) for prog in compiled_re):
             yield path
 
-def checksum (hash_func_name: Sequence[str], paths: str) -> dict:
+def checksum (paths: Sequence[str], hash_func_name: str, size: int) -> dict:
     """
     Do checksum of path in $paths using hashlib's $hash_func_name.
     Returns a dict.
@@ -272,7 +298,7 @@ def checksum (hash_func_name: Sequence[str], paths: str) -> dict:
     dd = collections.defaultdict(list)
     for path in paths:
         try:
-            _hash = get_hash(path, hash_func_name)
+            _hash = get_hash(path, hash_func_name, size)
             dd[_hash].append(path)
         except (OSError, PermissionError) as err:
             warnings.warn(f'get_hash: {path} => {err}')
@@ -290,6 +316,7 @@ def filter_dup (result_dict: dict) -> dict:
 
 def get_parser ():
     parser = argparse.ArgumentParser(
+        prog=PROGNAME,
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     # positional
@@ -298,6 +325,8 @@ def get_parser ():
                         metavar='PATH',
                         help='Search files in %(metavar)s(s).')
     # options
+    parser.add_argument('-v', '--version',
+                        action='version', version=f'%(prog)s {VERSION}')
     parser.add_argument('-d', '--depth', 
                         dest='depth', type=int, default=DEFAULT_DEPTH,
                         metavar='N',
@@ -311,30 +340,30 @@ def get_parser ():
                         help='''Hash function to use on files, One of: {}.
                         Default to "%(default)s".
                         '''.format(', '.join(hashlib.algorithms_available)))
+    parser.add_argument('-S', '--read-size',
+                          dest='read_size', type=int, default=READ_SIZE,
+                        metavar='SIZE',
+                        help='''Reads files %(metavar)s bytes at a time.
+                        If <= 0 reads files at once. Default: %(default)s''')
     parser.add_argument('-w', '--warn',
                         dest='warn', choices=WARN_OPT, default='always',
                         help='''Set warning level: choose from "%(choices)s"
                         to ignore them (no output), always print warnings or
                         raise an error. Default to "%(default)s".''')
     # op opts:
-    mr_group = parser.add_argument_group('multiproc and read options')
+    mr_group = parser.add_argument_group('processes/threads and read options')
     tm_group = mr_group.add_mutually_exclusive_group()
     tm_group.add_argument('-T', '--use-threads',
                         dest='use_thread', action='store_true',
                         help='''Use multithreading''')
-    tm_group.add_argument('-M', '--use-processes',
+    tm_group.add_argument('-P', '--use-processes',
                         dest='use_proc', action='store_true',
                         help='''Use multiprocessing''')
-    mr_group.add_argument('-S', '--read-size',
-                          dest='read_size', type=int, default=READ_SIZE,
-                        metavar='SIZE',
-                        help='''Reads files %(metavar)s bytes at a time.
-                        If <= 0 reads files at once. Default: %(default)s''')
     mr_group.add_argument('-c', '--chunks',
                         dest='proc_chunk', type=int, default=PROCESSOR_CHUNK,
                         metavar='NUM',
                         help='''The chunks size which is submitedd to the pool
-                        as separate tasks when using the multiprocessing
+                        as separate tasks when using the multiprocessing -P
                         option. Default: %(default)s''')
     mr_group.add_argument('-m', '--max-workers',
                         dest='max_workers', type=int, default=MAX_WORKERS,
@@ -343,9 +372,8 @@ def get_parser ():
                         to execute calls asynchronously. Default to %(default)s
                         which means using default parameters
                         (see concurrent.futures documentation).''')
-
     # filtering:
-    filter_group = parser.add_argument_group('filters')
+    filter_group = parser.add_argument_group('filtering options')
     filter_group.add_argument('-s', '--size',
                         dest='size', action='append', nargs=2, default=[],
                         metavar=('OPERATOR', 'VALUE'),
@@ -393,19 +421,20 @@ def get_parser ():
                         help='''Exclude paths which match %(metavar)ss
                         (use re.match).''')
     # output
-    output_group = parser.add_argument_group('output')
+    output_group = parser.add_argument_group('output options')
     output_group.add_argument('-j', '--json',
                         dest='to_json', action='store_true',
-                        help='''To be used with the -o option,
-                        save results in the json format
-                        (for subsequent easy processing).''')
+                        help='''Saves the result in the json format
+                        for subsequent easy processing.
+                        To be used with the -o option, conflicts with
+                        the -a option.''')
     meg = output_group.add_mutually_exclusive_group()
-    meg.add_argument('-o', '--output-file',
-                     dest='output', metavar='FILE',
-                     help='output results to %(metavar)s. (default: stdout).')
     meg.add_argument('-a', '--append-file',
                      dest='append', metavar='FILE',
-                     help='append results to %(metavar)s')
+                     help='append to %(metavar)s (default is to use stdout)')
+    meg.add_argument('-o', '--output-file',
+                     dest='output', metavar='FILE',
+                     help='outputs to %(metavar)s (default is to use stdout).')
     return parser
 
 def filter_size (paths, op_size_pairs):
@@ -442,73 +471,83 @@ def filter_time (paths, times_opts):
             except (TypeError, ValueError) as e:
                 raise TypeError(
                     'invalid time: {0}: {1}'.format(e, str_val))
-        filtered = prune_by_stat_attr(
-            op, STAT_PRUNE_OPTIONS[attr], val, filtered)
+        filtered = prune_by_stat_attr(filtered,
+            op, STAT_PRUNE_OPTIONS[attr], val)
     return filtered
 
 
-def exec_multi(fun, paths, executor_type,
+def exec_multi(fun, rargs, paths, executor_type, filter,
                chunk=PROCESSOR_CHUNK, max_workers=MAX_WORKERS):
     with Manager() as manager:
         lst = manager.list()
-        act = MPAFilter(fun, d)
+        act = filter(fun, rargs, lst)
         with executor_type(max_workers=max_workers) as executor:
             for _ in executor.map(act, paths, chunksize=chunk):
                 pass
-        return lst
+        return list(lst)
 
-def checksum_multi(fun, paths, executor_type,
+def checksum_multi(fun, rargs, paths, executor_type, filter,
                chunk=PROCESSOR_CHUNK, max_workers=MAX_WORKERS):
     with Manager() as manager:
         d = manager.dict()
-        act = MPAGetHash(fun, d)
+        act = filter(fun, rargs, d)
         with executor_type(max_workers=max_workers) as executor:
             for _ in executor.map(act, paths, chunksize=chunk):
                 pass
-        return d
+        return dict(d)
 
 def doit_multi (args):
     to_find = set()
-    executor_type = ThreadPoolExecutor if args.threads else ProcessPoolExecutor
-    __exec_args = (executor_type, args.proc_chunk, args.max_workers)
+
+    if args.use_thread:
+        executor_type = ThreadPoolExecutor
+        LOCK = Lock()
+        MPAFilter = MPAFilterT
+        MPAFilter.lock = LOCK
+        MPAGetHash = MPAGetHashT
+        MPAGetHash.lock = LOCK
+    else:
+        executor_type = ProcessPoolExecutor
+        MPAFilter = MPAFilterP
+        MPAGetHash = MPAGetHashP
+    __exec_args = (executor_type, MPAFilter, args.proc_chunk, args.max_workers)
+    __checksum_args = (executor_type, MPAGetHash, args.proc_chunk, args.max_workers)
+    
     for basepath in args.paths:
         all_paths = find(expand_path(os.path.join(os.getcwd(), basepath)),
                          args.depth)
-        regular = exec_multi(prune_regular, all_paths, *__exec_args)
-        filtered_ep = (exec_multi(functools.partial(exclude_pattern, args.exclude_patterns), regular, *__exec_args)
+        regular = exec_multi(prune_regular, [], all_paths, *__exec_args)
+        filtered_ep = (exec_multi(exclude_pattern, [args.exclude_patterns], regular, *__exec_args)
                        if args.exclude_patterns else regular)
-        filtered_regex = (exec_multi(functools.partial(exclude_regex, args.exclude_regex), filtered_ep, *__exec_args)
+        filtered_eregex = (exec_multi(exclude_regex, [args.exclude_regex], filtered_ep, *__exec_args)
                           if args.exclude_regex else filtered_ep)
-        filtered_p = (exec_multi(functools.partial(prune_pattern, args.patterns), filtered_regex, *__exec_args)
-                      if args.patterns else filtered_regex)
-        filtered_regex = (exec_multi(functools.partial(prune_regex, args.regex), filtered_p, *__exec_args)
+        filtered_p = (exec_multi(prune_pattern, [args.patterns], filtered_eregex, *__exec_args)
+                      if args.patterns else filtered_eregex)
+        filtered_regex = (exec_multi(prune_regex, [args.regex], filtered_p, *__exec_args)
                           if args.regex else filtered_p)
-        filtered_size = (exec_multi(functools.partial(filter_size, args.size), filtered_regex, *__exec_args)
+        filtered_size = (exec_multi(filter_size, [args.size], filtered_regex, *__exec_args)
                          if args.size else filtered_regex)
-        filtered_time = (exec_multi(functools.partial(filter_time, args.time), filtered_size, *__exec_args)
+        filtered_time = (exec_multi(filter_time, [args.time], filtered_size, *__exec_args)
                          if args.time else filtered_size)
         if args.gid is not None:
             filtered_gid = exec_multi(
-                functools.partial(
-                    prune_by_stat_attr, operator.eq, STAT_PRUNE_OPTIONS['gid'], args.gid),
+                    prune_by_stat_attr, [operator.eq, STAT_PRUNE_OPTIONS['gid'], args.gid],
                 filtered_time,
                 *__exec_args)
         else:
             filtered_gid = filtered_time
         if args.uid is not None:
             filtered_uid = exec_multi(
-                functools.partial(
-                    prune_by_stat_attr, operator.eq, STAT_PRUNE_OPTIONS['uid'], args.uid),
+                    prune_by_stat_attr, [operator.eq, STAT_PRUNE_OPTIONS['uid'], args.uid],
                 filtered_gid,
                 *__exec_args)
         else:
             filtered_uid = filtered_gid
         to_find.update(filtered_uid)
-        #get_hash (path: str, hash_type: str ='sha224', size: int =READ_SIZE)
     return checksum_multi(
-        functools.partial(get_hash, hash_type=args.hash, size=args.read_size),
-        to_find)
-
+        get_hash, [args.hash, args.read_size],
+        to_find, *__checksum_args)
+    
 def doit_nomulti (args):
     to_find = set()
     for basepath in args.paths:
@@ -517,28 +556,29 @@ def doit_nomulti (args):
         regular = prune_regular(all_paths)
         filtered_ep = (exclude_pattern(regular, args.exclude_patterns)
                        if args.exclude_patterns else regular)
-        filtered_regex = (exclude_regex(filtered_ep, args.exclude_regex)
+        filtered_eregex = (exclude_regex(filtered_ep, args.exclude_regex)
                           if args.exclude_regex else filtered_ep)
-        filtered_p = (prune_pattern(filtered_regex, args.patterns)
-                      if args.patterns else filtered_regex)
+        filtered_p = (prune_pattern(filtered_eregex, args.patterns)
+                      if args.patterns else filtered_eregex)
         filtered_regex = (prune_regex(filtered_p, args.regex)
                           if args.regex else filtered_p)
         filtered_size = filter_size(filtered_regex, args.size) if args.size else filtered_regex
-        filtered_time = filter_time(args.time, filtered_size) if args.time else filtered_size
+        filtered_time = filter_time(filtered_size, args.time) if args.time else filtered_size
         if args.gid is not None:
             filtered_gid = prune_by_stat_attr(
+                filtered_time,
                 operator.eq,
                 STAT_PRUNE_OPTIONS['gid'],
-                args.gid,
-                filtered_time)
+                args.gid)
         else:
             filtered_gid = filtered_time
         if args.uid is not None:
             filtered_uid = prune_by_stat_attr(
+                filtered_gid,
                 operator.eq,
                 STAT_PRUNE_OPTIONS['uid'],
-                args.uid,
-                filtered_gid)
+                args.uid
+                )
         else:
             filtered_uid = filtered_gid
         to_find.update(filtered_uid)
@@ -556,17 +596,22 @@ def main ():
         args.depth = DEFAULT_DEPTH
     if args.read_size <= 0:
         args.read_size = -1
-
     if args.append and args.to_json:
-        warnings.warn('[BAD!] -j option ignored. To be used with -o only.')
-    results = filter_dup(doit_nomulti(args))
+        parser.error('OPTION CONFLICT: -j, -a.')
+
+
+    if args.use_thread or args.use_proc:
+        results = filter_dup(doit_multi(args))
+    else:
+        results = filter_dup(doit_nomulti(args))
+
     if args.output:
         outfile = open(args.output, 'w')
     elif args.append:
         outfile = open(args.append, 'a')
     else:
         outfile = sys.stdout
-    if args.to_json and not args.append:
+    if args.to_json:
         json.dump(results, outfile)
     else:
         for hash_, files in results.items():
