@@ -15,12 +15,12 @@
 # along with this program; if not see <http://www.gnu.org/licenses/>
 
 import argparse
-import collections
-from collections.abc import Iterable
+from collections import defaultdict
+from collections.abc import Callable, Container, Iterator, MutableSequence, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-import datetime
-import fnmatch
-import functools
+from datetime import datetime
+from fnmatch import fnmatch
+from functools import partial
 import hashlib
 from itertools import chain
 import json
@@ -30,13 +30,16 @@ import operator
 import os
 import re
 import sys
-import time
-from typing import Callable, Iterator, List, Sequence, Tuple, Union
+from time import mktime
+from typing import NewType
 import warnings
+
+PPE = NewType('PPE', ProcessPoolExecutor)
+TPE = NewType('TPE', ThreadPoolExecutor)
 
 __doc__ = """=====================
 Find duplicate files.
-# python >= 3.8.10
+# tested with python >= 3.10.12
 
 Search for duplicated file on the given paths and write to file (or stdout)
 the result in the following format: a line with the ash of a group of
@@ -63,11 +66,12 @@ vinfo = sys.version_info
 if vinfo.major == 3 and vinfo.minor < 10:
     realpath = os.path.realpath
 else:
-    realpath = functools.partial(os.path.realpath, strict=True)
+    realpath = partial(os.path.realpath, strict=True)
 
 
 # WARNING OPTIONS
 WARN_OPT = ('ignore', 'always', 'error')
+
 
 ################################
 # MULTIPROC AND READ CONSTANTS #
@@ -104,42 +108,59 @@ PRUNE_OPERATIONS_MAP = {
     '>': operator.gt,
 }
 
+
 ###################
 # UTILITY CLASSES #
 ###################
 
 class AppendExtendAction(argparse.Action):
+    """
+    for options with nargs > 1 repeated at command line and
+    setting the default option's value  to [],
+    appends each values' occurence as a sequence:
+    --foo 2 3 4 => [[2,3,4]]
+    --foo 2 3 4 --foo 5 6 7 => [[2,3,4],[5,6,7]]
+    """
     def __call__(self, parser, namespace, values, option_string=None):
         old = getattr(namespace, self.dest)
         old.append(values)
         setattr(namespace, self.dest, old)
 
 class MPAction:
-    """For (Thread|Process)Pool"""
-    def __init__(self, fun, proxy):
+    """Base class for or (Thread|Process)Pool"""
+    def __init__(self, fun: Callable, proxy: Container):
+        """
+        A funtion to call and a container object
+        (list, dict, wethever) to collect data based on
+        the result of the function call.
+        """
         self.fun = fun
         self.proxy = proxy
-    
+
+
 class MPAFilterT(MPAction):
+    """For filtering operations using threads."""
     lock = None
-    def __init__(self, fun, proxy):
+    def __init__(self, fun: Callable, proxy: MutableSequence):
         self.fun = fun
         self.proxy = proxy
-    def __call__(self, path):
+    def __call__(self, path: str):
         if self.fun(path):
             self.lock.acquire()
             self.proxy.append(path)
             self.lock.release()
 
 class MPAFilterRegT(MPAFilterT):
-    def __call__(self, path):
+    """For filtering regular files using threads."""
+    def __call__(self, path: str):
         if (p := self.fun(path)):
             self.lock.acquire()
             self.proxy.append(p)
             self.lock.release()
 
 class MPAGetHashT(MPAFilterT):
-    def __call__(self, path):
+    """For pairing files and their hashes using threads."""
+    def __call__(self, path: str):
         ret = self.fun(path)
         self.lock.acquire()
         if ret not in self.proxy:
@@ -149,20 +170,23 @@ class MPAGetHashT(MPAFilterT):
         self.lock.release()
 
 class MPAFilterP(MPAction):
-    def __init__(self, fun, proxy):
+    """For filtering operations using processes."""
+    def __init__(self, fun: Callable, proxy: MutableSequence):
         self.fun = fun
         self.proxy = proxy
-    def __call__(self, path):
+    def __call__(self, path: str):
         if self.fun(path):
             self.proxy.append(path)
 
 class MPAFilterRegP(MPAFilterP):
-    def __call__(self, path):
+    """For filtering regular files using processes."""
+    def __call__(self, path: str):
         if (p := self.fun(path)):
             self.proxy.append(p)
 
 class MPAGetHashP(MPAFilterP):
-    def __call__(self, path):
+    """For pairing files and their hashes using processes."""
+    def __call__(self, path: str):
         ret = self.fun(path)
         val = self.proxy.setdefault(ret, [path])
         if val != [path]:
@@ -198,7 +222,7 @@ def frange (start: Number, stop: Number, step: Number=1) -> Iterator[Number]:
 # UTILITY FUNCS #
 #################
 
-def check_real (path: str) -> Tuple[bool, Union[str,None], Union[None, Exception]]:
+def check_real (path: str) -> tuple[bool, str|None, None|Exception]:
     """
     Checks if realpath($path) == $path
     Returns (bool, realpath, None) or (False, None, raised exception).
@@ -223,10 +247,10 @@ def check_regular (path: str) -> bool:
 
 def checksum (paths: Sequence[str], hash_func_name: str, size: int) -> dict:
     """
-    Do checksum of path in $paths using hashlib's $hash_func_name.
+    Do checksum of each path in $paths using hashlib's $hash_func_name.
     Returns a dict.
     """
-    dd = collections.defaultdict(list)
+    dd = defaultdict(list)
     for path in paths:
         try:
             _hash = get_hash(path, hash_func_name, size)
@@ -236,21 +260,56 @@ def checksum (paths: Sequence[str], hash_func_name: str, size: int) -> dict:
     return dd
 
 
-def checksum_multi(fun, paths, executor_type, filter,
-               chunk=PROCESSOR_CHUNK, max_workers=MAX_WORKERS):
+def checksum_multi (fun: Callable,
+                    paths: Sequence[str],
+                    executor_type: PPE|TPE,
+                    action_obj: MPAction,
+                    chunk: int =PROCESSOR_CHUNK,
+                    max_workers: int =MAX_WORKERS) -> dict:
+    """
+    Do checksum for each path in $paths with the given executor
+    using $action_obj to execute $fun.
+    Returns a dict.
+    """
     with Manager() as manager:
-        if hasattr(filter, 'lock'):
+        if hasattr(action_obj, 'lock'):
             d = dict()
         else:
             d = manager.dict()
-        act = filter(fun, d)
+        act = action_obj(fun, d)
         with executor_type(max_workers=max_workers) as executor:
             for _ in executor.map(act, paths, chunksize=chunk):
                 pass
-        if hasattr(filter, 'lock'):
+        if hasattr(action_obj, 'lock'):
             return d
         else:
             return dict(d)
+
+
+def exec_multi(fun: Callable,
+               paths: Sequence[str],
+               executor_type: PPE|TPE,
+               action_obj: MPAction,
+               chunk: int =PROCESSOR_CHUNK,
+               max_workers: int =MAX_WORKERS) -> list:
+    """
+    Executes some function for each path in $paths
+    with the given executor using $action_obj to execute $fun.
+    Returns a list.
+    """
+    with Manager() as manager:
+        if hasattr(action_obj, 'lock'):
+            lst = []
+        else:
+            lst = manager.list()
+        act = action_obj(fun, lst)
+        with executor_type(max_workers=max_workers) as executor:
+            for _ in executor.map(act, paths, chunksize=chunk):
+                pass
+        if hasattr(action_obj, 'lock'):
+            return lst
+        else:
+            return list(lst)
 
 
 def expand_path (path: str) -> str:
@@ -262,11 +321,11 @@ def exclude_pattern (path: str) -> bool:
     """
     Returns True if $path *don't* match any of $patterns (use fnmatch).
     """
-    return not any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
+    return not any(fnmatch(path, pattern) for pattern in patterns)
 
 
 def exclude_pattern_m (patterns: Sequence[str]) -> Callable:
-    """Returns a callable which match $path against $patterns."""
+    """Returns a callable which match a given path against $patterns."""
     global exclude_pattern_inner
     def exclude_pattern_inner (path: str) -> bool:
         """
@@ -277,7 +336,7 @@ def exclude_pattern_m (patterns: Sequence[str]) -> Callable:
 
 
 def exclude_pattern_s (paths: Sequence[str],
-                      patterns: Sequence[str]) -> Iterator[str]:
+                       patterns: Sequence[str]) -> Iterator[str]:
     """
     Prune by pattern.
     Yields paths from $paths which *don't* match any of $patterns (use fnmatch).
@@ -288,13 +347,16 @@ def exclude_pattern_s (paths: Sequence[str],
 
 
 def exclude_regex (paths: str, cregex: Sequence[re.Pattern]) -> bool:
+    """
+    Returns True if $path *not* match any
+    of the $regex pattern (use re.match).
+    """
     return not any(prog.match(path) for prog in cregex)
 
 
 def exclude_regex_m (cregex: Sequence[re.Pattern]) -> Callable:
     """
-    Returns True if $path *not* match any
-    of the $regex pattern (use re.match).
+    Returns a callable which tests a given path against $cregex.
     """
     global exclude_regex_inner
     def exclude_regex_inner (path: str) -> bool:
@@ -315,9 +377,13 @@ def exclude_regex_s (paths: Sequence[str],
 
 
 def filter_dup (result_dict: dict) -> dict:
-    """Returns a dict of {hash: list_of_filenames_with_the_same_hash}."""
+    """
+    Returns a dict of {hash: list_of_filenames_with_the_same_hash}
+    excluding unique files.
+    """
     return dict((hash_, files)
-                for hash_, files in result_dict.items() if len(files) > 1)
+                for hash_, files in result_dict.items()
+                if len(files) > 1)
 
 
 def _find_irregular (paths: Sequence[str]):
@@ -325,20 +391,20 @@ def _find_irregular (paths: Sequence[str]):
     #XXX+TODO: write a filter to find broken links or not stat-able files only
 
 
-def find (basepath: str, depth: Union[int,float]) -> Iterator[str]:
+def find (basepath: str, depth: Number) -> Iterator[str]:
     """Yields filenames from $basepath until $depth level."""
     for _, (subdir, _dirs, files) in zip(frange(0, depth), os.walk(basepath)):
         for filename in files:
             yield os.path.join(subdir, filename)
 
 
-def get_hash (path: str, hash_type: str, size: int) -> str:
+def get_hash (path: str, hash_type_name: str, size: int) -> str:
     """
-    Returns the hash of $path using $hash_type function.
-    reading blocks of $size bytes of the file at a time.
+    Returns the hash of $path using hashlib.new($hash_type_name).
+    Reads blocks of $size bytes of the file at a time.
     """
     with open(path, 'rb') as f:
-        hashed = hashlib.new(hash_type)
+        hashed = hashlib.new(hash_type_name)
         while True:
             buf = f.read(size)
             if not buf:
@@ -347,19 +413,24 @@ def get_hash (path: str, hash_type: str, size: int) -> str:
     return hashed.hexdigest()
 
 
-def get_hash_m (hash_type: str, size: int) -> Callable:
+def get_hash_m (hash_type_name: str, size: int) -> Callable:
     """
+    Returns a callable which calculate the hash of the given file
+    using hashlib.new($hash_type_name) and reading the file
+    $size bytes at a time.
     """
     global get_hash_inner
     def get_hash_inner(path: str):
+        return get_hash(path, hash_type_name, size)
+        """
         with open(path, 'rb') as f:
-            hashed = hashlib.new(hash_type)
+            hashed = hashlib.new(hash_type_name)
             while True:
                 buf = f.read(size)
                 if not buf:
                     break
                 hashed.update(buf)
-        return hashed.hexdigest()
+        return hashed.hexdigest()"""
     return get_hash_inner
 
 
@@ -368,12 +439,16 @@ def prune_by_stat_attr (path: str,
                         stat_attr: str,
                         value: Number) -> bool:
     """
+    Checks if $path has the $stat_attr attribute set
+    to $value using $op as comparison function.
     """
     return op(getattr(os.stat(path), stat_attr), value)
 
 
-def prune_by_stat_attr_m (fun: Union[all,any], triplets) -> Callable:
+def prune_by_stat_attr_m (fun: Callable, triplets) -> Callable:
     """
+    Returns a callable to check if the given $path has the $stat_attr
+    attribute set to $value using $op as comparison function.
     """
     global prune_by_stat_attr_inner
     def prune_by_stat_attr_inner(path):
@@ -382,11 +457,11 @@ def prune_by_stat_attr_m (fun: Union[all,any], triplets) -> Callable:
 
 
 def prune_by_stat_attr_s (paths: Sequence[str],
-                          fun: Union[all,any], triplets) -> Iterator[str]:
+                          fun: Callable, triplets) -> Iterator[str]:
     """
     Prune by stat attribute.
-    Yields filenames from $paths for which
-    $op(path's $stat_attr, $value) is True.#XXXX:update doc
+    Yields avery path from $paths for which
+    $fun(prune_by_stat_attr($op($stat_attr, $value))) is True.
     """
     for path in paths:
         if fun(prune_by_stat_attr(path, *t) for t in triplets):
@@ -396,12 +471,15 @@ def prune_by_stat_attr_s (paths: Sequence[str],
 def prune_pattern (path: str,
                    patterns: Sequence[str]) -> bool:
     """
+    Checks if $path matches any elements of $patterns (use fnmatch).
     """
-    return any(fnmatch.fnmatch(path, p) for p in patterns)
+    return any(fnmatch(path, p) for p in patterns)
 
 
 def prune_pattern_m (patterns: Sequence[str]) -> Callable:
     """
+    Returns a callable to checks if the given path
+    matches any elements of $patterns (use fnmatch).
     """
     global prune_pattern_inner
     def prune_pattern_inner(path):
@@ -413,22 +491,27 @@ def prune_pattern_s (paths: Sequence[str],
                      patterns: Sequence[str]) -> Iterator[str]:
     """
     Prune by pattern.
-    Yields paths from $paths which match any of the $patterns (use fnmatch).
+    Yields paths from $paths which match any elements of $patterns (use fnmatch).
     """
     for path in paths:
         if prune_pattern(path, patterns):
             yield path
 
 
-def prune_regular (path: str) -> bool:
+def prune_regular (path: str) -> tuple[bool, str]:
     """
+    Return True and (in this case) the real path of $path
+    if $path is a regular file.
     """
     is_real, real_path, err = check_real(path)
     return (is_real and check_regular(real_path)), real_path
             
 
-def prune_regular_m (path: str) -> bool:
-    """NOTE: if succedes returns the *real* path"""
+def prune_regular_m (path: str) -> str:
+    """
+    Return the real path of $path if $path is a regular file,
+    otherwise returns the empty string.
+    """
     ok, real_path = prune_regular(path)
     return real_path if ok else ""
 
@@ -443,14 +526,15 @@ def prune_regular_s (paths: Sequence[str]) -> Iterator[str]:
 
 def prune_regex (path: str, cregex: Sequence[re.Pattern]) -> bool:
     """
+    Checks if $path matches any elements of $cregex (using re.match).
     """
-    for path in paths:
-        if any (r.match(path) for r in cregex):
-            yield path
+    return any(r.match(path) for r in cregex)
 
 
 def prune_regex_m (cregex: Sequence[re.Pattern]) -> Callable:
     """
+    Returns a callable which hecks if the given path matches
+    any elements of $cregex (using re.match).
     """
     global prune_regex_inner
     def prune_regex_inner (path) -> bool:
@@ -461,8 +545,8 @@ def prune_regex_m (cregex: Sequence[re.Pattern]) -> Callable:
 def prune_regex_s (paths: Sequence[str], cregex: Sequence[re.Pattern]) -> Iterator[str]:
     """
     Prune with regex.
-    Yields paths from $paths which match any
-    of the $regex pattern (use re.match).
+    Yields paths from $paths which match
+    any elements of $cregex (use re.match).
     """
     for path in paths:
         if prune_regex(path, cregex):
@@ -473,7 +557,7 @@ def prune_regex_s (paths: Sequence[str], cregex: Sequence[re.Pattern]) -> Iterat
 # MAIN AND CMDLINE PROCEDURES #
 ###############################
 
-def get_parser ():
+def get_parser () -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=PROGNAME,
         description=__doc__,
@@ -607,22 +691,6 @@ def get_parser ():
 # EXECUTING FUNCS #
 ###################
 
-def exec_multi(fun, paths, executor_type, filter,
-               chunk=PROCESSOR_CHUNK, max_workers=MAX_WORKERS):
-    with Manager() as manager:
-        if hasattr(filter, 'lock'):
-            lst = []
-        else:
-            lst = manager.list()
-        act = filter(fun, lst)
-        with executor_type(max_workers=max_workers) as executor:
-            for _ in executor.map(act, paths, chunksize=chunk):
-                pass
-        if hasattr(filter, 'lock'):
-            return lst
-        else:
-            return list(lst)
-
 def doit_multi (args):
     to_find = []
 
@@ -749,8 +817,8 @@ def main ():
             val = int(str_val)
         except ValueError as e:
             try:
-                val = time.mktime(
-                    datetime.datetime(
+                val = mktime(
+                    datetime(
                         *map(int, str_val.split(':'))).timetuple())
             except (TypeError, ValueError) as e:
                 raise TypeError(
