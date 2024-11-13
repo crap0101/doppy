@@ -317,7 +317,7 @@ def expand_path (path: str) -> str:
     return os.path.abspath(os.path.expanduser(os.path.expandvars(path)))
 
 
-def exclude_pattern (path: str) -> bool:
+def exclude_pattern (path: str, patterns: Sequence[str]) -> bool:
     """
     Returns True if $path *don't* match any of $patterns (use fnmatch).
     """
@@ -346,7 +346,7 @@ def exclude_pattern_s (paths: Sequence[str],
             yield path
 
 
-def exclude_regex (paths: str, cregex: Sequence[re.Pattern]) -> bool:
+def exclude_regex (path: str, cregex: Sequence[re.Pattern]) -> bool:
     """
     Returns True if $path *not* match any
     of the $regex pattern (use re.match).
@@ -789,8 +789,20 @@ def main ():
     if args.append and args.to_json:
         parser.error('OPTION CONFLICT: -j, -a.')
 
-    args.regex = list(re.compile(r) for r in args.regex)
-
+    try:
+        _re_lst = []
+        for r in args.regex:
+            _re_lst.append(re.compile(r))
+        args.regex = _re_lst
+    except re.error as e:
+        raise parser.error('malformed regex "{}": {}'.format(r, e))
+    try:
+        _re_lst = []
+        for r in args.exclude_regex:
+            _re_lst.append(re.compile(r))
+        args.exclude_regex = _re_lst
+    except re.error as e:
+        raise parser.error('malformed regex "{}": {}'.format(r, e))
     __size = []
     try:
         for op_name, str_val in args.size:
