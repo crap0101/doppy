@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright (C) 2022-2024 Marco Chieppa (aka crap0101)
+# Copyright (C) 2022-2025 Marco Chieppa (aka crap0101)
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation; either version 3 of the License, or
@@ -57,7 +57,7 @@ DU......
 """
 
 PROGNAME = 'doppy'
-VERSION = '1.1'
+VERSION = '1.2'
 
 #XXX+TODO: update per files_stuff
 from files_stuff.filelist import find
