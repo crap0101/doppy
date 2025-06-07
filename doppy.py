@@ -59,14 +59,8 @@ DU......
 PROGNAME = 'doppy'
 VERSION = '1.1'
 
-#
-# Manage the 'strict' parameter of os.path.realpath (added since python 3.10)
-#
-vinfo = sys.version_info
-if vinfo.major == 3 and vinfo.minor < 10:
-    realpath = os.path.realpath
-else:
-    realpath = partial(os.path.realpath, strict=True)
+#XXX+TODO: update per files_stuff
+from files_stuff.filelist import find
 
 
 # WARNING OPTIONS
@@ -222,27 +216,6 @@ def frange (start: Number, stop: Number, step: Number=1) -> Iterator[Number]:
 # UTILITY FUNCS #
 #################
 
-def check_real (path: str) -> tuple[bool, str|None, None|Exception]:
-    """
-    Checks if realpath($path) == $path
-    Returns (bool, realpath, None) or (False, None, raised exception).
-    See: https://docs.python.org/3.8/library/os.path.html#os.path.realpath
-    """
-    try:
-        real_path = realpath(path)
-        is_real = (real_path == path)
-        return is_real, real_path, None
-    except OSError as err:
-        warnings.warn(f'{path} => {err}')        
-        return False, None, err
-
-
-def check_regular (path: str) -> bool:
-    """
-    Returns True if $path is a regular file and not a broken symlink nor
-    a file for wich the user doesn't have enough permissions.
-    """
-    return os.path.exists(path) and os.path.isfile(path)
 
 
 def checksum (paths: Sequence[str], hash_func_name: str, size: int) -> dict:
@@ -386,17 +359,6 @@ def filter_dup (result_dict: dict) -> dict:
                 if len(files) > 1)
 
 
-def _find_irregular (paths: Sequence[str]):
-    raise NotImplementedError('to be written')
-    #XXX+TODO: write a filter to find broken links or not stat-able files only
-
-
-def find (basepath: str, depth: Number) -> Iterator[str]:
-    """Yields filenames from $basepath until $depth level."""
-    for _, (subdir, _dirs, files) in zip(frange(0, depth), os.walk(basepath)):
-        for filename in files:
-            yield os.path.join(subdir, filename)
-
 
 def get_hash (path: str, hash_type_name: str, size: int) -> str:
     """
@@ -422,15 +384,6 @@ def get_hash_m (hash_type_name: str, size: int) -> Callable:
     global get_hash_inner
     def get_hash_inner(path: str):
         return get_hash(path, hash_type_name, size)
-        """
-        with open(path, 'rb') as f:
-            hashed = hashlib.new(hash_type_name)
-            while True:
-                buf = f.read(size)
-                if not buf:
-                    break
-                hashed.update(buf)
-        return hashed.hexdigest()"""
     return get_hash_inner
 
 
