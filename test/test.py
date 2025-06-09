@@ -1,4 +1,5 @@
 
+# doppy.py test suite
 # TODO: add more tests
 
 import os
@@ -70,16 +71,18 @@ class TestFind (unittest.TestCase):
         class FakeArgs:
             depth = doppy.DEFAULT_DEPTH
             hash = 'md5'
-            gid = uid = 1000
+            gid = uid = []
+            read_size = 1024
             regex =  patterns = size = time = []
+            exclude_patterns = exclude_regex = []
         args = FakeArgs()
         root, dirs = make_dtree(depth=3, dirnum=3)
         print('{}: root dir is => {}'.format(__file__, root))
         paths = make_ftree(root)
         dups = make_duplicate(paths, number=5)
         args.paths = [root]
-        results = doppy._doit(args)
-        dup_hash = doppy.get_hash(dups[0], 'md5')
+        results = doppy.doit_nomulti(args)
+        dup_hash = doppy.get_hash(dups[0], 'md5', args.read_size)
         filelist = results[dup_hash]
         self.assertEqual(len(filelist), len(dups))
         self.assertEqual(sorted(dups), sorted(filelist))

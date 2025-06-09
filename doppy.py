@@ -19,8 +19,6 @@ from collections import defaultdict
 from collections.abc import Callable, Container, Iterator, MutableSequence, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from datetime import datetime
-from fnmatch import fnmatch
-from functools import partial
 import hashlib
 from itertools import chain
 import json
@@ -34,9 +32,16 @@ from time import mktime
 from typing import NewType
 import warnings
 
-PPE = NewType('PPE', ProcessPoolExecutor)
-TPE = NewType('TPE', ThreadPoolExecutor)
+# external modules
+from files_stuff.filelist import find
+from files_stuff.paths import expand_path, get_real, check_regular
+from files_stuff.paths import prune_regular, prune_regular_s
+from files_stuff.paths import check_pattern, check_regex, check_stat_attr
+from files_stuff.paths import exclude_pattern, exclude_regex
+from files_stuff.paths import get_hash
 
+
+# PROGRAM'S INFO
 __doc__ = """=====================
 Find duplicate files.
 # tested with python >= 3.10.12
@@ -54,18 +59,19 @@ DUPLICATE_FILE_N_PATH
 DUP.....
 DU......
 ===========================================================================
+
+Need the files_stuff package @ https://github.com/crap0101/files_stuff
 """
 
 PROGNAME = 'doppy'
 VERSION = '1.2'
 
-#XXX+TODO: update per files_stuff
-from files_stuff.filelist import find
-
-
 # WARNING OPTIONS
 WARN_OPT = ('ignore', 'always', 'error')
 
+# CUSTOM TYEPS
+PPE = NewType('PPE', ProcessPoolExecutor)
+TPE = NewType('TPE', ThreadPoolExecutor)
 
 ################################
 # MULTIPROC AND READ CONSTANTS #
@@ -198,7 +204,7 @@ class MPAGetHashP(MPAFilterP):
 #########################
 
 def showwarning (message, cat, fn, lno, *a, **k):
-    print(message)
+    print(message, file=sys.stderr)
 warnings.showwarning = showwarning
 
 
@@ -215,7 +221,6 @@ def frange (start: Number, stop: Number, step: Number=1) -> Iterator[Number]:
 #################
 # UTILITY FUNCS #
 #################
-
 
 
 def checksum (paths: Sequence[str], hash_func_name: str, size: int) -> dict:
@@ -285,18 +290,6 @@ def exec_multi(fun: Callable,
             return list(lst)
 
 
-def expand_path (path: str) -> str:
-    """Expands $path to the canonical form."""
-    return os.path.abspath(os.path.expanduser(os.path.expandvars(path)))
-
-
-def exclude_pattern (path: str, patterns: Sequence[str]) -> bool:
-    """
-    Returns True if $path *don't* match any of $patterns (use fnmatch).
-    """
-    return not any(fnmatch(path, pattern) for pattern in patterns)
-
-
 def exclude_pattern_m (patterns: Sequence[str]) -> Callable:
     """Returns a callable which match a given path against $patterns."""
     global exclude_pattern_inner
@@ -319,14 +312,6 @@ def exclude_pattern_s (paths: Sequence[str],
             yield path
 
 
-def exclude_regex (path: str, cregex: Sequence[re.Pattern]) -> bool:
-    """
-    Returns True if $path *not* match any
-    of the $regex pattern (use re.match).
-    """
-    return not any(prog.match(path) for prog in cregex)
-
-
 def exclude_regex_m (cregex: Sequence[re.Pattern]) -> Callable:
     """
     Returns a callable which tests a given path against $cregex.
@@ -338,14 +323,15 @@ def exclude_regex_m (cregex: Sequence[re.Pattern]) -> Callable:
 
 
 def exclude_regex_s (paths: Sequence[str],
-                     cregex: Sequence[re.Pattern]) -> Iterator[str]:
+                     cregex: Sequence[re.Pattern],
+                     match_method='search') -> Iterator[str]:
     """
     Prune with regex.
-    Yields paths from $paths which *not* match any
-    of the $regex pattern (use re.match).
+    Yields paths from $paths which *not* match any of the $regex pattern,
+    using re.Pattern.$match_method (default to 'search').
     """
     for path in paths:
-        if exclude_regex(path, cregex):
+        if exclude_regex(path, cregex, match_method):
             yield path
 
 
@@ -357,22 +343,6 @@ def filter_dup (result_dict: dict) -> dict:
     return dict((hash_, files)
                 for hash_, files in result_dict.items()
                 if len(files) > 1)
-
-
-
-def get_hash (path: str, hash_type_name: str, size: int) -> str:
-    """
-    Returns the hash of $path using hashlib.new($hash_type_name).
-    Reads blocks of $size bytes of the file at a time.
-    """
-    with open(path, 'rb') as f:
-        hashed = hashlib.new(hash_type_name)
-        while True:
-            buf = f.read(size)
-            if not buf:
-                break
-            hashed.update(buf)
-    return hashed.hexdigest()
 
 
 def get_hash_m (hash_type_name: str, size: int) -> Callable:
@@ -387,16 +357,6 @@ def get_hash_m (hash_type_name: str, size: int) -> Callable:
     return get_hash_inner
 
 
-def prune_by_stat_attr (path: str,
-                        op: Callable,
-                        stat_attr: str,
-                        value: Number) -> bool:
-    """
-    Checks if $path has the $stat_attr attribute set
-    to $value using $op as comparison function.
-    """
-    return op(getattr(os.stat(path), stat_attr), value)
-
 
 def prune_by_stat_attr_m (fun: Callable, triplets) -> Callable:
     """
@@ -405,7 +365,7 @@ def prune_by_stat_attr_m (fun: Callable, triplets) -> Callable:
     """
     global prune_by_stat_attr_inner
     def prune_by_stat_attr_inner(path):
-        return fun(prune_by_stat_attr(path, *t) for t in triplets)
+        return fun(check_stat_attr(path, *t) for t in triplets)
     return prune_by_stat_attr_inner
 
 
@@ -414,19 +374,11 @@ def prune_by_stat_attr_s (paths: Sequence[str],
     """
     Prune by stat attribute.
     Yields avery path from $paths for which
-    $fun(prune_by_stat_attr($op($stat_attr, $value))) is True.
+    $fun(check_stat_attr($op($stat_attr, $value))) is True.
     """
     for path in paths:
-        if fun(prune_by_stat_attr(path, *t) for t in triplets):
+        if fun(check_stat_attr(path, *t) for t in triplets):
             yield path
-
-
-def prune_pattern (path: str,
-                   patterns: Sequence[str]) -> bool:
-    """
-    Checks if $path matches any elements of $patterns (use fnmatch).
-    """
-    return any(fnmatch(path, p) for p in patterns)
 
 
 def prune_pattern_m (patterns: Sequence[str]) -> Callable:
@@ -436,7 +388,7 @@ def prune_pattern_m (patterns: Sequence[str]) -> Callable:
     """
     global prune_pattern_inner
     def prune_pattern_inner(path):
-        return prune_pattern(path, patterns)
+        return check_pattern(path, patterns)
     return prune_pattern_inner
 
 
@@ -447,62 +399,31 @@ def prune_pattern_s (paths: Sequence[str],
     Yields paths from $paths which match any elements of $patterns (use fnmatch).
     """
     for path in paths:
-        if prune_pattern(path, patterns):
+        if check_pattern(path, patterns):
             yield path
 
 
-def prune_regular (path: str) -> tuple[bool, str]:
+def prune_regex_m (cregex: Sequence[re.Pattern], match_method: str = 'search') -> Callable:
     """
-    Return True and (in this case) the real path of $path
-    if $path is a regular file.
-    """
-    is_real, real_path, err = check_real(path)
-    return (is_real and check_regular(real_path)), real_path
-            
-
-def prune_regular_m (path: str) -> str:
-    """
-    Return the real path of $path if $path is a regular file,
-    otherwise returns the empty string.
-    """
-    ok, real_path = prune_regular(path)
-    return real_path if ok else ""
-
-
-def prune_regular_s (paths: Sequence[str]) -> Iterator[str]:
-    """Yields only regular $paths"""
-    for path in paths:
-        ok, real_path = prune_regular(path)
-        if ok:
-            yield real_path
-
-
-def prune_regex (path: str, cregex: Sequence[re.Pattern]) -> bool:
-    """
-    Checks if $path matches any elements of $cregex (using re.match).
-    """
-    return any(r.match(path) for r in cregex)
-
-
-def prune_regex_m (cregex: Sequence[re.Pattern]) -> Callable:
-    """
-    Returns a callable which hecks if the given path matches
-    any elements of $cregex (using re.match).
+    Returns a callable which checks if the given path matches
+    any elements of $cregex using re.Pattern.$match_method (default to 'search').
     """
     global prune_regex_inner
     def prune_regex_inner (path) -> bool:
-        return prune_regex(path, cregex)
+        return check_regex(path, cregex, match_method)
     return prune_regex_inner
 
 
-def prune_regex_s (paths: Sequence[str], cregex: Sequence[re.Pattern]) -> Iterator[str]:
+def prune_regex_s (paths: Sequence[str],
+                   cregex: Sequence[re.Pattern],
+                   match_method: str = 'search') -> Iterator[str]:
     """
     Prune with regex.
-    Yields paths from $paths which match
-    any elements of $cregex (use re.match).
+    Yields paths from $paths which match any elements of $cregex,
+    using re.Pattern.$match_method (default to 'search').
     """
     for path in paths:
-        if prune_regex(path, cregex):
+        if check_regex(path, cregex, match_method):
             yield path
 
 
@@ -612,7 +533,7 @@ def get_parser () -> argparse.ArgumentParser:
                               dest='regex', nargs='+', default=[],
                               action='extend', metavar='PATTERN',
                               help='''Check only whole paths which match %(metavar)ss
-                              (use re.match). Multiple options works like logical ORs.''')
+                              (use re.search). Multiple options works like logical ORs.''')
     filter_group.add_argument('-e', '--exclude',
                               dest='exclude_patterns', nargs='+', default=[],
                               action='extend', metavar='PATTERN',
@@ -622,7 +543,7 @@ def get_parser () -> argparse.ArgumentParser:
                               dest='exclude_regex', nargs='+', default=[],
                               action='extend', metavar='PATTERN',
                               help='''Exclude paths which match %(metavar)ss
-                              (use re.match). Multiple options works like logical ORs.''')
+                              (use re.search). Multiple options works like logical ORs.''')
     # output
     output_group = parser.add_argument_group('output options')
     output_group.add_argument('-j', '--json',
@@ -667,7 +588,7 @@ def doit_multi (args):
     for basepath in args.paths:
         all_paths = find(expand_path(os.path.join(os.getcwd(), basepath)),
                          args.depth)
-        regular = exec_multi(prune_regular_m, all_paths, *__exec_reg_args)
+        regular = exec_multi(prune_regular, all_paths, *__exec_reg_args)
         filtered_ep = (exec_multi(exclude_pattern_m(args.exclude_patterns), regular, *__exec_args)
                        if args.exclude_patterns else regular)
         filtered_eregex = (exec_multi(exclude_regex_m(args.exclude_regex), filtered_ep, *__exec_args)
@@ -735,7 +656,7 @@ def main ():
 
     if args.max_workers is not None and args.max_workers < 1:
         parser.error("max workers must be > 0")
-    if args.depth <= 0:
+    if args.depth < 0:
         args.depth = DEFAULT_DEPTH
     if args.read_size <= 0:
         args.read_size = -1
