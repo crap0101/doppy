@@ -30,15 +30,19 @@ import re
 import sys
 from time import mktime
 from typing import NewType
-import warnings
 
-# external modules
+
+# external modules:
+# https://github.com/crap0101/files_stuff
 from files_stuff.filelist import find
-from files_stuff.paths import expand_path, get_real, check_regular
+from files_stuff.paths import expand_path
 from files_stuff.paths import prune_regular, prune_regular_s
 from files_stuff.paths import check_pattern, check_regex, check_stat_attr
 from files_stuff.paths import exclude_pattern, exclude_regex
 from files_stuff.paths import get_hash
+from files_stuff.paths import PathWarning
+# https://github.com/crap0101/py_warnings
+from py_warnings import pywarn
 
 
 # PROGRAM'S INFO
@@ -61,13 +65,11 @@ DU......
 ===========================================================================
 
 Need the files_stuff package @ https://github.com/crap0101/files_stuff
+and py_warning @ https://github.com/crap0101/py_warnings
 """
 
 PROGNAME = 'doppy'
 VERSION = '1.2'
-
-# WARNING OPTIONS
-WARN_OPT = ('ignore', 'always', 'error')
 
 # CUSTOM TYEPS
 PPE = NewType('PPE', ProcessPoolExecutor)
@@ -203,10 +205,6 @@ class MPAGetHashP(MPAFilterP):
 # GENERIC UTILITY FUNCS #
 #########################
 
-def showwarning (message, cat, fn, lno, *a, **k):
-    print(message, file=sys.stderr)
-warnings.showwarning = showwarning
-
 
 def frange (start: Number, stop: Number, step: Number=1) -> Iterator[Number]:
     """
@@ -234,7 +232,7 @@ def checksum (paths: Sequence[str], hash_func_name: str, size: int) -> dict:
             _hash = get_hash(path, hash_func_name, size)
             dd[_hash].append(path)
         except (OSError, PermissionError) as err:
-            warnings.warn(f'get_hash: {path} => {err}')
+            pywarn.warn(PathWarning(f'get_hash: {path} => {err}'))
     return dd
 
 
@@ -462,7 +460,7 @@ def get_parser () -> argparse.ArgumentParser:
                         help='''Reads files %(metavar)s bytes at a time.
                         If <= 0 reads files at once. Default: %(default)s''')
     parser.add_argument('-w', '--warn',
-                        dest='warn', choices=WARN_OPT, default='always',
+                        dest='warn', choices=pywarn.WARN_OPT, default='always',
                         help='''Set warning level: choose from "%(choices)s"
                         to ignore them (no output), always print warnings or
                         raise an error. Default to "%(default)s".''')
@@ -649,7 +647,8 @@ def doit_nomulti (args):
 def main ():
     parser = get_parser()
     args = parser.parse_args()
-    warnings.simplefilter(args.warn)
+    pywarn.set_filter(args.warn, PathWarning)
+    pywarn.set_showwarning(pywarn.bare_showwarning)
 
     if not args.paths:
         args.paths.append(os.getcwd())
