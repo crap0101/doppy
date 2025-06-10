@@ -94,12 +94,11 @@ STAT_PRUNE_OPTIONS = {
     'uid':   'st_uid',      # User id of the owner.
     'gid':   'st_gid',      # Group id of the owner.
     'size':  'st_size',     # Size in bytes
-    'atime': 'st_atime_ns', # Time of last access.
-    'mtime': 'st_mtime_ns', # Time of last modification.
-    'ctime': 'st_ctime_ns', # On some systems (like Unix) is the time of the
+    'atime': 'st_atime', # Time of last access.
+    'mtime': 'st_mtime', # Time of last modification.
+    'ctime': 'st_ctime', # On some systems (like Unix) is the time of the
                             # last metadata change, and, on others
                             # (like Windows), is the creation time
-                            # Note: using the _ns version for better precision
 }
 
 PRUNE_OPERATIONS_MAP = {
