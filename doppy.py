@@ -34,7 +34,8 @@ from typing import NewType
 
 # external modules:
 # https://github.com/crap0101/files_stuff
-from files_stuff.filelist import find
+from files_stuff.filelist import find, FilelistWarning
+from files_stuff.guid import uid_from_name, gid_from_name, name_from_uid, name_from_gid
 from files_stuff.paths import expand_path
 from files_stuff.paths import prune_regular, prune_regular_s
 from files_stuff.paths import check_pattern, check_regex, check_stat_attr
@@ -513,13 +514,24 @@ def get_parser () -> argparse.ArgumentParser:
                                   ', '.join(('atime', 'mtime', 'ctime'))))
     filter_group.add_argument('-g', '--gid',
                               dest='gid', type=int, nargs='+', default=[],
-                              action='extend', metavar='gid',
-                              help='''Check only files with the given GID.
+                              action='extend', metavar='GID',
+                              help='''Check only files with the given %(metavar)s.
+                              Multiple options works like logical ORs.''')
+    filter_group.add_argument('-G', '--groups',
+                              dest='groups', nargs='+', default=[],
+                              action='extend', metavar='GROUP',
+                              help='''Check only files which %(metavar)s is the
+                              group name of the owner.
                               Multiple options works like logical ORs.''')
     filter_group.add_argument('-u', '--uid',
                               dest='uid', type=int, nargs='+', default=[],
                               action='extend', metavar='uid',
                               help='''Check only files with the given UID.
+                              Multiple options works like logical ORs.''')
+    filter_group.add_argument('-U', '--users',
+                              dest='users', nargs='+', default=[],
+                              action='extend', metavar='USER',
+                              help='''Check only files owned by the given %(metavar)s.
                               Multiple options works like logical ORs.''')
     filter_group.add_argument('-p', '--patterns',
                               dest='patterns', nargs='+', default=[],
@@ -646,10 +658,14 @@ def doit_nomulti (args):
 def main ():
     parser = get_parser()
     args = parser.parse_args()
+
+    # set the warnings/errors behaviour
     pywarn.set_filter(args.warn, PathWarning)
+    pywarn.set_filter(args.warn, FilelistWarning)
     pywarn.set_showwarning(pywarn.bare_showwarning)
 
     if not args.paths:
+        print('NOTICE: No paths specified, using the current directory...', file=sys.stderr)
         args.paths.append(os.getcwd())
 
     if args.max_workers is not None and args.max_workers < 1:
@@ -667,14 +683,14 @@ def main ():
             _re_lst.append(re.compile(r))
         args.regex = _re_lst
     except re.error as e:
-        raise parser.error('malformed regex "{}": {}'.format(r, e))
+        parser.error('malformed regex "{}": {}'.format(r, e))
     try:
         _re_lst = []
         for r in args.exclude_regex:
             _re_lst.append(re.compile(r))
         args.exclude_regex = _re_lst
     except re.error as e:
-        raise parser.error('malformed regex "{}": {}'.format(r, e))
+        parser.error('malformed regex "{}": {}'.format(r, e))
     __size = []
     try:
         for op_name, str_val in args.size:
@@ -710,8 +726,24 @@ def main ():
         __time.append((op, STAT_PRUNE_OPTIONS[attr], val))
     args.time = __time
 
-    if args.gid:
+    # check gid/uid and groups/usernames:
+    if args.groups:
+        for g in args.groups:
+            try: args.gid.append(gid_from_name(g))
+            except KeyError: parser.error(f'Unknown group: {g}')
+    for gid in args.gid:
+        try: name_from_gid(gid)
+        except KeyError:parser.error(f'Unknown gid: {gid}')
+    if args.gid: #XXXX
         args.gid = list((operator.eq, STAT_PRUNE_OPTIONS['gid'], g) for g in args.gid)
+    # 
+    if args.users:
+        for u in args.users:
+            try: args.uid.append(uid_from_name(u))
+            except KeyError: parser.error(f'Unknown user: {u}')
+    for uid in args.uid:
+        try: name_from_uid(uid)
+        except KeyError:parser.error(f'Unknown uid: {uid}')
     if args.uid:
         args.uid = list((operator.eq, STAT_PRUNE_OPTIONS['uid'], u) for u in args.uid)
 
@@ -720,6 +752,7 @@ def main ():
     else:
         results = filter_dup(doit_nomulti(args))
 
+    # manage output:
     if args.output:
         outfile = open(args.output, 'w')
     elif args.append:
