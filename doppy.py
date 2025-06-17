@@ -90,8 +90,8 @@ MAX_WORKERS = None
 # SOME CONSTANTS FOR PRUNE/COMPARE OPERATIONS #
 ###############################################
 
-# see https://docs.python.org/3.8/library/os.html#os.stat_result
-STAT_PRUNE_OPTIONS = {
+# see https://docs.python.org/3/library/os.html#os.stat_result
+STAT_OPTIONS = {
     'uid':   'st_uid',      # User id of the owner.
     'gid':   'st_gid',      # Group id of the owner.
     'size':  'st_size',     # Size in bytes
@@ -696,11 +696,11 @@ def main ():
         for op_name, str_val in args.size:
             val = int(str_val)
             op = PRUNE_OPERATIONS_MAP[op_name]
-            __size.append((op, STAT_PRUNE_OPTIONS['size'], val))
+            __size.append((op, STAT_OPTIONS['size'], val))
     except ValueError as e:
-        raise TypeError('invalid argument for size: {}'.format(str_val))
+        raise TypeError('invalid argument for size: {}'.format(str_val)) from None
     except KeyError as e:
-        raise TypeError('invalid operator for size: {}'.format(op_name))
+        raise TypeError('invalid operator for size: {}'.format(op_name)) from None
     args.size = __size
 
     __time = []
@@ -708,11 +708,11 @@ def main ():
         try:
             op = PRUNE_OPERATIONS_MAP[op_name]
         except KeyError as e:
-            raise TypeError('invalid operator for time: {}'.format(op_name))
+            raise TypeError('invalid operator for time: {}'.format(op_name)) from None
         try:
             assert attr in ('atime', 'ctime', 'mtime')
         except AssertionError as e:
-            raise TypeError('invalid argument for time: {}'.format(attr))
+            raise TypeError('invalid argument for time: {}'.format(attr)) from None
         try:
             val = int(str_val)
         except ValueError as e:
@@ -722,8 +722,8 @@ def main ():
                         *map(int, str_val.split(':'))).timetuple())
             except (TypeError, ValueError) as e:
                 raise TypeError(
-                    'invalid time: {0}: {1}'.format(e, str_val))
-        __time.append((op, STAT_PRUNE_OPTIONS[attr], val))
+                    'invalid time: {0}: {1}'.format(e, str_val)) from None
+        __time.append((op, STAT_OPTIONS[attr], val))
     args.time = __time
 
     # check gid/uid and groups/usernames:
@@ -735,7 +735,7 @@ def main ():
         try: name_from_gid(gid)
         except KeyError:parser.error(f'Unknown gid: {gid}')
     if args.gid: #XXXX
-        args.gid = list((operator.eq, STAT_PRUNE_OPTIONS['gid'], g) for g in args.gid)
+        args.gid = list((operator.eq, STAT_OPTIONS['gid'], g) for g in args.gid)
     # 
     if args.users:
         for u in args.users:
@@ -745,7 +745,7 @@ def main ():
         try: name_from_uid(uid)
         except KeyError:parser.error(f'Unknown uid: {uid}')
     if args.uid:
-        args.uid = list((operator.eq, STAT_PRUNE_OPTIONS['uid'], u) for u in args.uid)
+        args.uid = list((operator.eq, STAT_OPTIONS['uid'], u) for u in args.uid)
 
     if args.use_thread or args.use_proc:
         results = filter_dup(doit_multi(args))
