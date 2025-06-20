@@ -42,6 +42,7 @@ from files_stuff.paths import check_pattern, check_regex, check_stat_attr
 from files_stuff.paths import exclude_pattern, exclude_regex
 from files_stuff.paths import get_hash
 from files_stuff.paths import PathWarning
+from files_stuff.bytes_units import VariBaseBytes, BytesUnit
 # https://github.com/crap0101/py_warnings
 from py_warnings import pywarn
 
@@ -497,7 +498,13 @@ def get_parser () -> argparse.ArgumentParser:
                               --size > 100 (VALUE in bytes) matches only files
                               greater than 100 bytes. Available operators are {0}.
                               Multiple options works like logical ANDs.
-                              '''.format(', '.join(PRUNE_OPERATIONS_MAP.keys())))
+                              Values can be bare numbers or numbers with a suffix
+                              as in 1000B, 12KB, etc. Legal suffix: {1}.
+                              '''.format(', '.join(PRUNE_OPERATIONS_MAP.keys()),
+                                         ', '.join(VariBaseBytes.UNIT_SYMBOLS)))
+    filter_group.add_argument('--si',
+                              dest='si_unit', action='store_true',
+                              help='use powers of 1000 (not 1024) for the -s/--size option.')
     filter_group.add_argument('-t', '--time',
                               dest='time',  nargs=3, default=[],
                               action=AppendExtendAction,
@@ -694,7 +701,13 @@ def main ():
     __size = []
     try:
         for op_name, str_val in args.size:
-            val = int(str_val)
+            try:
+                _b = BytesUnit(str_val, standard=VariBaseBytes)
+                if args.si_unit:
+                    _b.standard.convert_base(1000)
+            except ValueError as e:
+                parser.error(e)
+            val = _b.bytes
             op = PRUNE_OPERATIONS_MAP[op_name]
             __size.append((op, STAT_OPTIONS['size'], val))
     except ValueError as e:
@@ -734,7 +747,7 @@ def main ():
     for gid in args.gid:
         try: name_from_gid(gid)
         except KeyError:parser.error(f'Unknown gid: {gid}')
-    if args.gid: #XXXX
+    if args.gid:
         args.gid = list((operator.eq, STAT_OPTIONS['gid'], g) for g in args.gid)
     # 
     if args.users:
