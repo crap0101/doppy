@@ -23,7 +23,6 @@ import hashlib
 from itertools import chain
 import json
 from multiprocessing import Manager, Lock
-from numbers import Number
 import operator
 import os
 import re
@@ -45,6 +44,8 @@ from files_stuff.paths import PathWarning
 from files_stuff.bytes_units import VariBaseBytes, BytesUnit
 # https://github.com/crap0101/py_warnings
 from py_warnings import pywarn
+# https://github.com/crap0101/laundry_basket/blob/master/mismatched_socks.py
+from mismatched_socks import frange
 
 
 # PROGRAM'S INFO
@@ -202,20 +203,6 @@ class MPAGetHashP(MPAFilterP):
             self.proxy[ret] = list(self.proxy[ret]) + [path]
         """
 
-#########################
-# GENERIC UTILITY FUNCS #
-#########################
-
-
-def frange (start: Number, stop: Number, step: Number=1) -> Iterator[Number]:
-    """
-    Range function yielding values from $start to $stop (excluded) by $step,
-    supporting any Number arguments.
-    """
-    while start < stop:
-        yield start
-        start += step
-
 
 #################
 # UTILITY FUNCS #
@@ -225,7 +212,7 @@ def frange (start: Number, stop: Number, step: Number=1) -> Iterator[Number]:
 def checksum (paths: Sequence[str], hash_func_name: str, size: int) -> dict:
     """
     Do checksum of each path in $paths using hashlib's $hash_func_name.
-    Returns a dict.
+    Returns a dict of hash:[path, ...].
     """
     dd = defaultdict(list)
     for path in paths:
